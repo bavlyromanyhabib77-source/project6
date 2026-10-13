@@ -13,8 +13,8 @@
 window.TRIP_CONFIG = {
   // ---------- بيانات الرحلة ----------
   place:   "نادي كنيسة العدرا – بني أحمد",   // مكان التجمع
-  date:    "الأربع ٢١ / ١٠",                          // التاريخ
-  time:    "الساعة ٥ مساءً",                          // ميعاد التحرك
+  date:    "الأربع ٢١ / ١٠",                    // التاريخ
+  time:    "الساعة ٥ مساءً",                    // ميعاد التحرك
   price:   80,                                 // الاشتراك بالجنيه (رقم بس)
   invite: `🤍✨ مش كل الاجتماعات بتتنسى… فيه اجتماعات بتسيب حتة حلوة جوانا! ✨🤍
 تخيّل كده يوم مختلف، ناس بتحبهم، ضحك من القلب، ووقت نسرق فيه نفسنا من زحمة الأيام ونقرب أكتر من ربنا ومن بعض 🫶🏻
@@ -26,20 +26,19 @@ window.TRIP_CONFIG = {
 وجودك مش مجرد حضور… وجودك هو اللي بيكمّل اللمة! 🫂✨
 مستنيينك، ومتقولش المرة دي: المرة الجاية إن شاء الله 😂❤️
 يلا بينا نعمل ذكريات حلوة سوا! 🔥🤍`,   // نص الدعوة (لو غيّرت السعر غيّره هنا كمان)
-  tagline: "",                                 // جملة تحت العنوان الكبير (سيبها فاضية لو مش عايز)
+  tagline: "",                                 // جملة صغيرة تحت العنوان الكبير (اختياري)
 
   // ---------- الدفع (InstaPay) ----------
   ipa:     "YOURNAME@instapay",                // عنوان InstaPay اللي الناس تحوّل عليه
   ipaName: "",                                 // اسم صاحب الحساب (اختياري)
   phone:   "01xxxxxxxxx",                      // رقم التحويل
 
-  // ---------- المسؤول والمقاعد ----------
-  adminPin: "5555",                            // كلمة سر المسؤول
-  adminEmail: "admin@trip.app",                // حساب داخلي، متغيّرهوش
+  // ---------- Supabase (الصق بيانات مشروعك هنا) ----------
+  // مثال: supabase: { url: "https://abcdxyz.supabase.co", anonKey: "eyJ..." },
+  supabase: null,
 
-  // ---------- Firebase (بتلصق إعدادات مشروعك هنا) ----------
-  // مثال: firebase: { apiKey:"...", authDomain:"...", projectId:"...", appId:"..." },
-  firebase: null
+  // كلمة سر المسؤول للوضع التجريبي بس. في الوضع الحقيقي بتتغير من ملف SQL (admin_pin)
+  demoPin: "5555"
 };
 
 </script>
@@ -335,7 +334,7 @@ html{scroll-behavior:smooth}
 // طبقة البيانات: بتربط صفحة التسجيل بصفحة المسؤول (Firebase أو وضع تجريبي)
 (function () {
   const C = window.TRIP_CONFIG;
-  const FB = !!(C.firebase && C.firebase.apiKey && !/YOUR_/.test(C.firebase.apiKey));
+  const FB = !!(C.supabase && C.supabase.url && C.supabase.anonKey && !/YOUR_|xxxx/.test(C.supabase.url + C.supabase.anonKey));
   const T = { mode: FB ? "live" : "demo" };
 
   if (!FB) {
@@ -358,41 +357,46 @@ html{scroll-behavior:smooth}
     };
     T.setPaid = async (id, v) => sv("trip_regs", ls("trip_regs", []).map(r => r.id === id ? { ...r, paid: v } : r));
     T.remove = async id => sv("trip_regs", ls("trip_regs", []).filter(r => r.id !== id));
-    T.login = async (e, p) => { if (p !== C.adminPin) throw 0; st.setItem("trip_admin", "1"); fire(); };
+    T.login = async (e, p) => { if (p !== C.demoPin) throw 0; st.setItem("trip_admin", "1"); fire(); };
     T.logout = async () => { st.removeItem("trip_admin"); fire(); };
+    T.getReceipt = async id => (ls("trip_regs", []).find(r => r.id === id) || {}).receipt || "";
     T.onAuth = cb => { authCbs.push(cb); cb(isAdmin()); };
 
-    document.addEventListener("DOMContentLoaded", () => {
-      const d = document.createElement("div");
-      //d.textContent = "وضع تجريبي: البيانات محفوظة في المتصفح ده بس. للتشغيل الفعلي على كل الأجهزة حط إعدادات Firebase في TRIP_CONFIG.";
-      //d.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#111c3f;color:#fff;font:600 13px Cairo,sans-serif;text-align:center;padding:8px;z-index:99";
-      document.body.appendChild(d);
-    });
   } else {
-    // ---------- وضع حقيقي: Firebase ----------
-    const load = s => new Promise((ok, no) => { const e = document.createElement("script"); e.src = s; e.onload = ok; e.onerror = no; document.head.appendChild(e); });
-    const B = "https://www.gstatic.com/firebasejs/10.12.2/firebase-";
-    let db, au;
-    const ready = (async () => {
-      await load(B + "app-compat.js");
-      await Promise.all([load(B + "firestore-compat.js"), load(B + "auth-compat.js")]);
-      firebase.initializeApp(C.firebase); db = firebase.firestore(); au = firebase.auth();
-    })();
-    const sub = fn => { let u = () => {}, dead = false; ready.then(() => { if (!dead) u = fn(); }); return () => { dead = true; u(); }; };
-    const RC = () => db.collection("registrations");
-
-    T.onRegs = cb => sub(() => RC().orderBy("createdAt", "desc").onSnapshot(s => cb(s.docs.map(d => ({ id: d.id, ...d.data() })))));
-    T.register = async d => { await ready; await RC().add({ ...d, paid: false, createdAt: firebase.firestore.FieldValue.serverTimestamp() }); };
-    T.setPaid = async (id, v) => { await ready; await RC().doc(id).update({ paid: v }); };
-    T.remove = async id => { await ready; await RC().doc(id).delete(); };
-    T.login = async (e, p) => {
-      if (p !== C.adminPin) throw 0;
-      await ready; const em = C.adminEmail, pw = p + "-trip-admin";
-      try { await au.signInWithEmailAndPassword(em, pw); }
-      catch (x) { await au.createUserWithEmailAndPassword(em, pw); }
+    // ---------- وضع حقيقي: Supabase (REST) ----------
+    const U = C.supabase.url.replace(/\/$/, ""), K = C.supabase.anonKey;
+    const H = { apikey: K, "Content-Type": "application/json" };
+    if (K.startsWith("eyJ")) H.Authorization = "Bearer " + K;
+    const rest = async (path, body, extra) => {
+      const r = await fetch(U + "/rest/v1/" + path, { method: "POST", headers: { ...H, ...(extra || {}) }, body: JSON.stringify(body) });
+      const t = await r.text(); if (!r.ok) throw new Error(t || r.status);
+      return t ? JSON.parse(t) : null;
     };
-    T.logout = async () => { await ready; await au.signOut(); };
-    T.onAuth = cb => { ready.then(() => au.onAuthStateChanged(u => cb(!!u))); };
+    const rpc = (fn, args) => rest("rpc/" + fn, args);
+    let PIN = null; try { PIN = sessionStorage.getItem("trip_pin"); } catch {}
+    const authCbs = [], fire = () => authCbs.forEach(f => f(!!PIN));
+    let pollNow = () => {};
+
+    T.register = async d => rest("registrations", { name: d.name, phone: d.phone, notes: d.notes || "", method: d.method,
+      txn: d.txn || "", receipt: d.receipt || "", attending: true }, { Prefer: "return=minimal" });
+    T.onRegs = cb => {
+      let last, dead = false;
+      const f = async () => { try {
+        const rows = (await rpc("admin_list", { pin: PIN })).map(r => ({ ...r, receipt: r.has_receipt ? "__remote__" : "" }));
+        const s = JSON.stringify(rows); if (!dead && s !== last) { last = s; cb(rows); }
+      } catch {} };
+      pollNow = f; f(); const i = setInterval(f, 3000);
+      return () => { dead = true; clearInterval(i); };
+    };
+    T.setPaid = async (id, v) => { await rpc("admin_set_paid", { pin: PIN, rid: id, val: v }); pollNow(); };
+    T.remove = async id => { await rpc("admin_delete", { pin: PIN, rid: id }); pollNow(); };
+    T.getReceipt = id => rpc("admin_receipt", { pin: PIN, rid: id });
+    T.login = async (e, p) => {
+      if (!(await rpc("admin_check", { pin: p }))) throw 0;
+      PIN = p; try { sessionStorage.setItem("trip_pin", p); } catch {} fire();
+    };
+    T.logout = async () => { PIN = null; try { sessionStorage.removeItem("trip_pin"); } catch {} fire(); };
+    T.onAuth = cb => { authCbs.push(cb); cb(!!PIN); };
   }
   window.Trip = T;
 })();
@@ -506,7 +510,8 @@ html{scroll-behavior:smooth}
     const t = e.target, f = t.dataset;
     if (f.f) { filter = f.f; document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b === t)); draw(); }
     if (f.pay) { const r = rows.find(x => x.id === f.pay); Trip.setPaid(r.id, !r.paid); }
-    if (f.img) { $("mimg").src = rows.find(x => x.id === f.img).receipt; $("modal").classList.add("show"); }
+    if (f.img) { const r = rows.find(x => x.id === f.img); $("mimg").removeAttribute("src"); $("modal").classList.add("show");
+      $("mimg").src = (r.receipt && r.receipt !== "__remote__") ? r.receipt : await Trip.getReceipt(r.id); }
     if (f.del && confirm("متأكد من حذف التسجيل؟")) Trip.remove(f.del);
   });
   $("modal").onclick = () => $("modal").classList.remove("show");
